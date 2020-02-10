@@ -2,6 +2,8 @@
 #define THC_GENERIC_FILE "THC/generic/THCTensorMode.cu"
 #else
 
+#include <thrust/iterator/constant_iterator.h>
+
 void THCTensor_(calculateMode)(THCState *state,
                                THCTensor *values,
                                THCudaLongTensor *indices,
@@ -113,7 +115,7 @@ void THCTensor_(calculateMode)(THCState *state,
 #endif
 
   THAssert(positionIter != iter.end());
-  int64_t index = TH_INDEX_BASE + seq[positionIter - iter.begin()];
+  int64_t index = seq[positionIter - iter.begin()];
 
   // Place mode, index in output
   ptrdiff_t valuesOffset = THCTensor_(storageOffset)(state, values);
@@ -191,7 +193,7 @@ void THCTensor_(mode)(THCState *state,
   // If sliceSize is 1, copy input to values and set indices
   if (sliceSize == 1) {
     THCTensor_(copy)(state, values, input);
-    THCudaLongTensor_fill(state, indices, TH_INDEX_BASE);
+    THCudaLongTensor_fill(state, indices, 0);
     if (!keepdim) {
       THCTensor_(squeeze1d)(state, values, values, dimension);
       THCudaLongTensor_squeeze1d(state, indices, indices, dimension);

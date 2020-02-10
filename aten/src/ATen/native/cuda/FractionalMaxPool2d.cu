@@ -8,6 +8,7 @@
 #include <ATen/TensorUtils.h>
 #include <ATen/Utils.h>
 #include <c10/util/Exception.h>
+#include <THC/THCAtomics.cuh>
 
 #include <algorithm>
 #include <cfloat>
@@ -115,7 +116,7 @@ __global__ void fractional_max_pool2d_backward_out_cuda_frame(
     int inputH = index / gradInput.size(3);
     assert(inputH < gradInput.size(2));
 
-    atomicAdd(
+    gpuAtomicAdd(
       &gradInput[batch][plane][inputH][inputW],
       gradOutput[batch][plane][outputH][outputW]
     );
@@ -126,8 +127,8 @@ void fractional_max_pool2d_out_cuda_template(
   Tensor & output,
   Tensor& indices,
   const Tensor& input,
-  IntList pool_size,
-  IntList output_size,
+  IntArrayRef pool_size,
+  IntArrayRef output_size,
   const Tensor& randomSamples) {
   int planeDim = 0;
   int dimh = 1;
@@ -135,11 +136,11 @@ void fractional_max_pool2d_out_cuda_template(
   int numBatch = 1;
 
   int ndims = input.ndimension();
-  AT_CHECK(input.numel() > 0,
+  TORCH_CHECK(input.numel() > 0,
     "fractional_max_pool2d(): expected input to have non-empty ",
     "spatial dimensions.");
 
-  AT_CHECK((ndims == 3 || ndims == 4),
+  TORCH_CHECK((ndims == 3 || ndims == 4),
      "non-empty 3D or 4D (batch mode) tensor expected for input");
 
   if (ndims == 4) {
@@ -159,10 +160,10 @@ void fractional_max_pool2d_out_cuda_template(
   int poolSizeH = pool_size[0];
   int poolSizeW = pool_size[1];
 
-  AT_CHECK(outputH + poolSizeH - 1 <= inputH,
+  TORCH_CHECK(outputH + poolSizeH - 1 <= inputH,
              "fractional_max_pool2d(): pool_size height ", poolSizeH,
              " too large relative to input height ", inputH);
-  AT_CHECK(outputW + poolSizeW - 1 <= inputW,
+  TORCH_CHECK(outputW + poolSizeW - 1 <= inputW,
            "pool_size width ", poolSizeW,
            " too large relative to input width ", inputW);
 
@@ -195,7 +196,7 @@ void fractional_max_pool2d_out_cuda_template(
             input_.size(0));
   dim3 block(outputPlaneSize > 128 ? 128 : outputPlaneSize);
 
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.type(),
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(),
     "fractional_max_pool2d_out_cuda_frame",
     [&] {
       auto devInput = input_.packed_accessor<scalar_t, 4>();
@@ -208,7 +209,7 @@ void fractional_max_pool2d_out_cuda_template(
           poolSizeH, poolSizeW);
        }
      );
-  AT_CHECK(cudaGetLastError() == cudaSuccess,
+  TORCH_CHECK(cudaGetLastError() == cudaSuccess,
      "fractional_max_pool2d_out_cuda_frame failed with error code ",
      cudaGetLastError());
 }
@@ -217,8 +218,8 @@ void fractional_max_pool2d_backward_out_cuda_template(
   Tensor& gradInput,
   const Tensor& gradOutput,
   const Tensor& input,
-  IntList pool_size /* unused */,
-  IntList output_size,
+  IntArrayRef pool_size /* unused */,
+  IntArrayRef output_size,
   const Tensor& indices)
 {
   int dimh = 1;
@@ -237,9 +238,9 @@ void fractional_max_pool2d_backward_out_cuda_template(
   int outputH = output_size[0];
   int outputW = output_size[1];
 
-  AT_CHECK(outputH == gradOutput.size(dimh),
+  TORCH_CHECK(outputH == gradOutput.size(dimh),
            "fractional_max_pool2d(): gradOutput height unexpected");
-  AT_CHECK(outputW == gradOutput.size(dimw),
+  TORCH_CHECK(outputW == gradOutput.size(dimw),
            "fractional_max_pool2d(): gradOutput width unexpected");
 
   /* resize */
@@ -267,7 +268,7 @@ void fractional_max_pool2d_backward_out_cuda_template(
   dim3 block(outputPlaneSize > 128 ? 128 : outputPlaneSize);
 
   auto devIndices = indices.packed_accessor<int64_t, 4>();
-  AT_DISPATCH_FLOATING_TYPES_AND_HALF(gradOutput.type(),
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(gradOutput.scalar_type(),
     "fractional_max_pool2d_backward_out_cuda_frame",
     [&] {
       auto devGradInput = gradInput_.packed_accessor<scalar_t, 4>();
@@ -277,7 +278,7 @@ void fractional_max_pool2d_backward_out_cuda_template(
         devGradInput, devGradOutput, devIndices);
       }
     );
-  AT_CHECK(cudaGetLastError() == cudaSuccess,
+  TORCH_CHECK(cudaGetLastError() == cudaSuccess,
     "fractional_max_pool2d_backward_out_cuda_frame failed with error code ",
     cudaGetLastError());
 }
@@ -288,8 +289,8 @@ std::tuple<Tensor&, Tensor&> fractional_max_pool2d_out_cuda(
   at::Tensor& output,
   at::Tensor& indices,
   const at::Tensor& input,
-  IntList pool_size,
-  IntList output_size,
+  IntArrayRef pool_size,
+  IntArrayRef output_size,
   const at::Tensor& randomSamples)
 {
   fractional_max_pool2d_out_cuda_template(
@@ -304,8 +305,8 @@ std::tuple<Tensor&, Tensor&> fractional_max_pool2d_out_cuda(
 
 std::tuple<Tensor, Tensor> fractional_max_pool2d_cuda(
   const at::Tensor& input,
-  IntList pool_size,
-  IntList output_size,
+  IntArrayRef pool_size,
+  IntArrayRef output_size,
   const at::Tensor& randomSamples)
 {
   Tensor output = at::empty({0}, input.options());
@@ -324,8 +325,8 @@ Tensor& fractional_max_pool2d_backward_out_cuda(
   at::Tensor& gradInput,
   const at::Tensor& gradOutput_,
   const at::Tensor& input,
-  IntList pool_size,
-  IntList output_size,
+  IntArrayRef pool_size,
+  IntArrayRef output_size,
   const at::Tensor& indices)
 {
   fractional_max_pool2d_backward_out_cuda_template(
@@ -341,8 +342,8 @@ Tensor& fractional_max_pool2d_backward_out_cuda(
 Tensor fractional_max_pool2d_backward_cuda(
   const at::Tensor& gradOutput_,
   const at::Tensor& input,
-  IntList pool_size,
-  IntList output_size,
+  IntArrayRef pool_size,
+  IntArrayRef output_size,
   const at::Tensor& indices)
 {
   Tensor gradInput = at::empty({0}, input.options());

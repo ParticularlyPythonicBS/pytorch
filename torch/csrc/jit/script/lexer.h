@@ -1,14 +1,17 @@
 #pragma once
+#include <ATen/core/Macros.h>
+#include <c10/util/C++17.h>
 #include <c10/util/Exception.h>
+#include <torch/csrc/WindowsTorchApiMacro.h>
+#include <torch/csrc/jit/script/strtod.h>
+#include <torch/csrc/jit/script/parser_constants.h>
 #include <torch/csrc/jit/source_range.h>
-#include <torch/csrc/utils/memory.h>
 #include <algorithm>
 #include <clocale>
-#include <iostream>
+#include <cstdlib>
 #include <memory>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace torch {
@@ -39,6 +42,7 @@ namespace script {
   _(TK_STRINGLITERAL, "string_literal", "")      \
   _(TK_CONST, "const", "")                       \
   _(TK_LIST, "list", "")                         \
+  _(TK_DICT, "dict", "")                         \
   _(TK_OPTION, "option", "")                     \
   _(TK_APPLY, "apply", "")                       \
   _(TK_COMPREHENSION, "comprehension", "")       \
@@ -79,10 +83,12 @@ namespace script {
   _(TK_SUBSCRIPT, "subscript", "")               \
   _(TK_VAR, "variable", "")                      \
   _(TK_NOTHING, "nothing", "")                   \
+  _(TK_DICT_LITERAL, "dict-literal", "")         \
   _(TK_LIST_LITERAL, "list-literal", "")         \
   _(TK_TUPLE_LITERAL, "tuple-literal", "")       \
   _(TK_FOR, "for", "for")                        \
   _(TK_IN, "in", "in")                           \
+  _(TK_NOTIN, "not in", "not in")                \
   _(TK_STARRED, "starred", "")                   \
   _(TK_UNARY_MINUS, "unary minus", "")           \
   _(TK_POW, "pow operator", "**")                \
@@ -93,9 +99,13 @@ namespace script {
   _(TK_RAISE, "raise", "raise")                  \
   _(TK_ASSERT, "assert", "assert")               \
   _(TK_DOTS, "dots", "...")                      \
-  _(TK_PASS, "pass", "pass")
-
-static const char* valid_single_char_tokens = "+-*/%@()[]:,={}><.?!&^|";
+  _(TK_LIST_COMP, "list comprehension", "")      \
+  _(TK_BREAK, "break", "break")                  \
+  _(TK_CONTINUE, "continue", "continue")         \
+  _(TK_DELETE, "del", "del")                     \
+  _(TK_PASS, "pass", "pass")                     \
+  _(TK_CLASS_DEF, "class", "class")              \
+  _(TK_IMPORT, "import", "import")
 
 enum TokenKind {
   // we use characters to represent themselves so skip all valid characters
@@ -107,8 +117,8 @@ enum TokenKind {
 #undef DEFINE_TOKEN
 };
 
-std::string kindToString(int kind);
-int stringToKind(const std::string& str);
+CAFFE2_API std::string kindToString(int kind);
+CAFFE2_API int stringToKind(const std::string& str);
 
 // nested hash tables that indicate char-by-char what is a valid token.
 struct TokenTrie;
@@ -130,7 +140,7 @@ struct TokenTrie {
     }
 
     child_chars.emplace_back(*str);
-    child_tries.emplace_back(torch::make_unique<TokenTrie>());
+    child_tries.emplace_back(std::make_unique<TokenTrie>());
     child_tries.back()->insert(str + 1, tok);
   }
   int kind; // 0 == invalid token
@@ -141,7 +151,7 @@ struct TokenTrie {
 
 // stuff that is shared against all TC lexers/parsers and is initialized only
 // once.
-struct SharedParserData {
+struct CAFFE2_API SharedParserData {
   SharedParserData() : head(new TokenTrie()) {
     std::stringstream ss;
     for (const char* c = valid_single_char_tokens; *c; c++) {
@@ -156,19 +166,7 @@ struct SharedParserData {
     TC_FORALL_TOKEN_KINDS(ADD_CASE)
 #undef ADD_CASE
   }
-#ifdef _WIN32
-  static double strtod_c(const char* str, char** end) {
-    /// NOLINTNEXTLINE(hicpp-signed-bitwise)
-    static _locale_t loc = _create_locale(LC_ALL, "C");
-    return _strtod_l(str, end, loc);
-  }
-#else
-  static double strtod_c(const char* str, char** end) {
-    /// NOLINTNEXTLINE(hicpp-signed-bitwise)
-    static locale_t loc = newlocale(LC_ALL_MASK, "C", nullptr);
-    return strtod_l(str, end, loc);
-  }
-#endif
+
   // 1. skip whitespace
   // 2. handle comment or newline
   //
@@ -182,7 +180,7 @@ struct SharedParserData {
       return false;
     const char* startptr = str.c_str() + start;
     char* endptr;
-    strtod_c(startptr, &endptr);
+    torch::jit::script::strtod_c(startptr, &endptr);
     *len = endptr - startptr;
     return *len > 0;
   }
@@ -357,7 +355,7 @@ struct SharedParserData {
   TokenTrieRef head;
 };
 
-SharedParserData& sharedParserData();
+CAFFE2_API SharedParserData& sharedParserData();
 
 struct Token {
   int kind;
@@ -372,8 +370,8 @@ struct Token {
 };
 
 struct Lexer {
-  explicit Lexer(const std::string& str)
-      : file(std::make_shared<std::string>(str)),
+  explicit Lexer(const std::shared_ptr<Source>& source)
+      : source(source),
         pos(0),
         nesting(0),
         indent_stack(),
@@ -474,7 +472,8 @@ struct Lexer {
             indent_stack.pop_back();
             next_tokens.emplace_back(TK_DEDENT, r.range);
             if (indent_stack.size() == 0) {
-              reportError("invalid indent level " + std::to_string(depth), r);
+              reportError(
+                  "invalid indent level " + c10::guts::to_string(depth), r);
             }
           }
           return; // We've already queued the tokens
@@ -489,9 +488,9 @@ struct Lexer {
     int kind;
     size_t start;
     size_t length;
-    AT_ASSERT(file);
+    AT_ASSERT(source);
     if (!shared.match(
-            *file,
+            source->text(),
             pos,
             nesting > 0,
             whitespace_token,
@@ -500,17 +499,18 @@ struct Lexer {
             &length)) {
       expected(
           "a valid token",
-          Token((*file)[start], SourceRange(file, start, start + 1)));
+          Token(
+              (source->text())[start], SourceRange(source, start, start + 1)));
     }
-    auto t = Token(kind, SourceRange(file, start, start + length));
+    auto t = Token(kind, SourceRange(source, start, start + length));
     pos = start + length;
     return t;
   }
 
-  std::shared_ptr<std::string> file;
+  std::shared_ptr<Source> source;
   size_t pos;
   size_t nesting; // depth of ( [ { nesting...
-  std::vector<int> indent_stack; // stack of identation level of blocks
+  std::vector<int> indent_stack; // stack of indentation level of blocks
   // Invariant: this should always contain at least a single element
   std::vector<Token> next_tokens;
   SharedParserData& shared;

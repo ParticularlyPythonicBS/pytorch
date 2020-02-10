@@ -61,9 +61,9 @@ namespace test_true_for_each_type {
 
 namespace test_map {
     class MyClass {};
-    static_assert(std::is_same<typelist<>, map_t<c10::guts::add_lvalue_reference_t, typelist<>>>::value, "");
-    static_assert(std::is_same<typelist<int&>, map_t<c10::guts::add_lvalue_reference_t, typelist<int>>>::value, "");
-    static_assert(std::is_same<typelist<int&, double&, const MyClass&>, map_t<c10::guts::add_lvalue_reference_t, typelist<int, double, const MyClass>>>::value, "");
+    static_assert(std::is_same<typelist<>, map_t<std::add_lvalue_reference_t, typelist<>>>::value, "");
+    static_assert(std::is_same<typelist<int&>, map_t<std::add_lvalue_reference_t, typelist<int>>>::value, "");
+    static_assert(std::is_same<typelist<int&, double&, const MyClass&>, map_t<std::add_lvalue_reference_t, typelist<int, double, const MyClass>>>::value, "");
 }
 
 namespace test_head {
@@ -137,5 +137,18 @@ namespace test_map_types_to_values {
         static_assert(std::is_same<decltype(expected), decltype(result)>::value, "");
         EXPECT_EQ(expected, result);
     }
+}
 
+namespace test_find_if {
+  static_assert(0 == find_if<typelist<char&>, std::is_reference>::value, "");
+  static_assert(0 == find_if<typelist<char&, int, char&, int&>, std::is_reference>::value, "");
+  static_assert(2 == find_if<typelist<char, int, char&, int&>, std::is_reference>::value, "");
+  static_assert(3 == find_if<typelist<char, int, char, int&>, std::is_reference>::value, "");
+}
+
+namespace test_contains {
+  static_assert(contains<typelist<double>, double>::value, "");
+  static_assert(contains<typelist<int, double>, double>::value, "");
+  static_assert(!contains<typelist<int, double>, float>::value, "");
+  static_assert(!contains<typelist<>, double>::value, "");
 }

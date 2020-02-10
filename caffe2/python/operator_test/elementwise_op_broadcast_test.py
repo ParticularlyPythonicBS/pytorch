@@ -105,7 +105,7 @@ class TestElementwiseBroadcast(serial.SerializedTestCase):
         Y = np.random.rand(4, 5).astype(np.float32) + 2.0
 
         #two gradients Y*X^(Y-1) and X^Y * ln(X)
-        #latter gradient is sumed over 1 and 0 dims to account for broadcast
+        #latter gradient is summed over 1 and 0 dims to account for broadcast
         def powt_grad_broadcast(g_out, outputs, fwd_inputs):
             [GX, GY] = powt_grad(g_out, outputs, fwd_inputs)
             return ([GX, np.sum(np.sum(GY, 1), 0)])
@@ -127,7 +127,7 @@ class TestElementwiseBroadcast(serial.SerializedTestCase):
             return powt_op(X, Y[:, :, np.newaxis])
 
         #two gradients Y*X^(Y-1) and X^Y * ln(X)
-        #latter gradient is sumed over 3 and 0 dims to account for broadcast
+        #latter gradient is summed over 3 and 0 dims to account for broadcast
         def powt_grad_axis1(g_out, outputs, fwd_inputs):
             [X, Y] = fwd_inputs
             [GX, GY] = powt_grad(g_out, outputs, [X, Y[:, :, np.newaxis]])
@@ -150,7 +150,7 @@ class TestElementwiseBroadcast(serial.SerializedTestCase):
             return powt_op(X, Y[:, np.newaxis, np.newaxis, np.newaxis])
 
         #two gradients Y*X^(Y-1) and X^Y * ln(X)
-        #latter gradient is sumed over 3, 2 and 1 dims to account for broadcast
+        #latter gradient is summed over 3, 2 and 1 dims to account for broadcast
         def powt_grad_axis0(g_out, outputs, fwd_inputs):
             [X, Y] = fwd_inputs
             [GX, GY] = powt_grad(g_out,
@@ -175,7 +175,7 @@ class TestElementwiseBroadcast(serial.SerializedTestCase):
             return powt_op(X, Y[np.newaxis, :, :, :])
 
         #two gradients Y*X^(Y-1) and X^Y * ln(X)
-        #latter gradient is sumed over 0 and 1 dims to account for broadcast
+        #latter gradient is summed over 0 and 1 dims to account for broadcast
         def powt_grad_mixed(g_out, outputs, fwd_inputs):
             [X, Y] = fwd_inputs
             [GX, GY] = powt_grad(g_out, outputs, [X, Y[np.newaxis, :, :, :]])
@@ -327,7 +327,7 @@ class TestElementwiseBroadcast(serial.SerializedTestCase):
         dc_cpu_only = [d for d in dc if d.device_type != caffe2_pb2.CUDA]
         self.assertDeviceChecks(dc_cpu_only, op, [X, Y], [0])
 
-    @unittest.skipIf(not workspace.has_gpu_support and not workspace.has_hip_support, "No gpu support")
+    @unittest.skipIf(not workspace.has_gpu_support, "No gpu support")
     @given(**hu.gcs)
     def test_sum_reduce_fp16(self, gc, dc):
         assume(core.IsGPUDeviceType(gc.device_type))

@@ -12,8 +12,13 @@
 #include <c10/util/typeid.h>
 #include "caffe2/core/logging.h"
 #include "caffe2/core/tensor.h"
+#include "caffe2/core/tensor_int8.h"
 
 namespace caffe2 {
+
+inline bool BlobIsInt8TensorCPUType(const Blob& blob) {
+  return blob.meta().Match<int8::Int8TensorCPU>();
+}
 
 inline bool BlobIsTensorType(const Blob& blob, DeviceType device_type) {
   bool is_match = blob.meta().Match<Tensor>();
@@ -30,9 +35,12 @@ inline Tensor* BlobSetTensor(Blob* blob, Tensor&& tensor) {
 
 inline Tensor GetSizedTensorWithOptions(
     Tensor&& previous_tensor,
-    at::IntList dims,
+    at::IntArrayRef dims,
     at::TensorOptions options) {
   Tensor tensor = std::move(previous_tensor);
+  if (!tensor.defined()) {
+    return caffe2::empty(dims, options);
+  }
   if (tensor.GetDevice() == options.device() ||
       (!tensor.GetDevice().has_index() &&
        tensor.GetDeviceType() == options.device().type())) {
@@ -54,7 +62,7 @@ inline Tensor GetSizedTensorWithOptions(
 // need to keep both functions that returns Tensor* and the one
 // returns Tensor for clangr codemod
 inline Tensor*
-BlobGetMutableTensor(Blob* blob, at::IntList dims, at::TensorOptions options) {
+BlobGetMutableTensor(Blob* blob, at::IntArrayRef dims, at::TensorOptions options) {
   if (blob->IsType<Tensor>()) {
     Tensor* tensor = blob->GetMutable<Tensor>();
     if (*tensor) {
@@ -83,7 +91,7 @@ BlobGetMutableTensor(Blob* blob, at::IntList dims, at::TensorOptions options) {
 }
 
 inline Tensor
-XBlobGetMutableTensor(Blob* blob, at::IntList dims, at::TensorOptions options) {
+XBlobGetMutableTensor(Blob* blob, at::IntArrayRef dims, at::TensorOptions options) {
   return BlobGetMutableTensor(blob, dims, options)->UnsafeSharedInstance();
 }
 
@@ -111,6 +119,14 @@ inline const Tensor& BlobGetTensor(const Blob& blob, DeviceType device_type) {
     }
   }
   CAFFE_THROW("Blob didn't contain a Tensor or the device_type doesn't match");
+}
+
+inline Tensor BlobGetTensorOrUndefined(const Blob& blob) {
+  if (blob.IsType<Tensor>()) {
+    return blob.Get<Tensor>().UnsafeSharedInstance();
+  } else {
+    return Tensor();
+  }
 }
 
 }  // namespace caffe2

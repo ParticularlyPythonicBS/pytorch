@@ -40,7 +40,7 @@ class SubgraphSlicer {
     bool any_changed = true;
     while (any_changed) {
       any_changed = false;
-      auto aliasDb = AliasAnalysis(graph_);
+      AliasDb aliasDb(graph_);
       for (auto it = block_->nodes().rbegin(); it != block_->nodes().rend();) {
         bool changed;
         std::tie(it, changed) = scanNode(*it, aliasDb);
@@ -71,7 +71,7 @@ class SubgraphSlicer {
       }
       curNode = prevNode;
     }
-    // Run CSE one more time to eliminate duplicates that may have occured
+    // Run CSE one more time to eliminate duplicates that may have occurred
     // while re-inlining subgraphs.
     EliminateCommonSubexpression(graph_);
   }
@@ -80,7 +80,7 @@ class SubgraphSlicer {
   // Inline this node's group subgraph into the outer graph if it's smaller
   // than the specified minimum size.
   //
-  // Returns true if an inlining has occured, false otherwise.
+  // Returns true if an inlining has occurred, false otherwise.
   bool inlineIfTooSmall(Node* n) {
     AT_ASSERT(n->kind() == prim::DifferentiableGraph);
     auto subgraph = SubgraphUtils::getSubgraph(n);
@@ -174,6 +174,5 @@ std::vector<Node*> CreateAutodiffSubgraphs(
   SubgraphSlicer(graph->block(), graph, threshold).run(diff_nodes);
   return diff_nodes;
 }
-
 } // namespace jit
 } // namespace torch

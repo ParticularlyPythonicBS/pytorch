@@ -14,6 +14,8 @@
 #define THCudaShortTensor THCTensor
 #define THCudaIntTensor THCTensor
 #define THCudaLongTensor THCTensor
+#define THCudaBoolTensor THCTensor
+#define THCudaBFloat16Tensor THCTensor
 
 /**** access methods ****/
 THC_API THCStorage* THCTensor_(storage)(THCState *state, const THCTensor *self);
@@ -63,7 +65,6 @@ THC_API THCTensor *THCTensor_(newContiguous)(THCState *state, THCTensor *tensor)
 THC_API THCTensor *THCTensor_(newSelect)(THCState *state, THCTensor *tensor, int dimension_, int64_t sliceIndex_);
 THC_API THCTensor *THCTensor_(newNarrow)(THCState *state, THCTensor *tensor, int dimension_, int64_t firstIndex_, int64_t size_);
 THC_API THCTensor *THCTensor_(newTranspose)(THCState *state, THCTensor *tensor, int dimension1_, int dimension2_);
-THC_API THCTensor *THCTensor_(newUnfold)(THCState *state, THCTensor *tensor, int dimension_, int64_t size_, int64_t step_);
 THC_API THCTensor *THCTensor_(newFoldBatchDim)(THCState *state, THCTensor *input);
 
 // resize* methods simply resize the storage. So they may not retain the current data at current indices.
@@ -98,15 +99,12 @@ THC_API void THCTensor_(setStorage4d)(THCState *state, THCTensor *self, THCStora
 THC_API void THCTensor_(narrow)(THCState *state, THCTensor *self, THCTensor *src, int dimension_, int64_t firstIndex_, int64_t size_);
 THC_API void THCTensor_(select)(THCState *state, THCTensor *self, THCTensor *src, int dimension_, int64_t sliceIndex_);
 THC_API void THCTensor_(transpose)(THCState *state, THCTensor *self, THCTensor *src, int dimension1_, int dimension2_);
-THC_API void THCTensor_(unfold)(THCState *state, THCTensor *self, THCTensor *src, int dimension_, int64_t size_, int64_t step_);
 
-THC_API void THCTensor_(squeeze)(THCState *state, THCTensor *self, THCTensor *src);
 THC_API void THCTensor_(squeeze1d)(THCState *state, THCTensor *self, THCTensor *src, int dimension_);
 THC_API void THCTensor_(unsqueeze1d)(THCState *state, THCTensor *self, THCTensor *src, int dimension_);
 
 THC_API int THCTensor_(isContiguous)(THCState *state, const THCTensor *self);
 THC_API int THCTensor_(isSameSizeAs)(THCState *state, const THCTensor *self, const THCTensor *src);
-THC_API int THCTensor_(isSetTo)(THCState *state, const THCTensor *self, const THCTensor *src);
 THC_API ptrdiff_t THCTensor_(nElement)(THCState *state, const THCTensor *self);
 
 THC_API void THCTensor_(retain)(THCState *state, THCTensor *self);

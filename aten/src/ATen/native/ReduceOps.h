@@ -17,6 +17,10 @@ DECLARE_DISPATCH(reduce_fn, prod_stub);
 DECLARE_DISPATCH(reduce_fn, mean_stub);
 DECLARE_DISPATCH(reduce_fn, and_stub);
 DECLARE_DISPATCH(reduce_fn, or_stub);
+DECLARE_DISPATCH(reduce_fn, min_values_stub);
+DECLARE_DISPATCH(reduce_fn, max_values_stub);
+DECLARE_DISPATCH(reduce_fn, argmax_stub);
+DECLARE_DISPATCH(reduce_fn, argmin_stub);
 
 using reduce_std_var_function =
   void (*)(TensorIterator&, bool unbiased, bool take_sqrt);

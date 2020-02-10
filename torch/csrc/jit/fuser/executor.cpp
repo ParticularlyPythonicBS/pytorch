@@ -2,14 +2,14 @@
 
 #include <ATen/ATen.h>
 #include <ATen/ExpandUtils.h>
+#include <ATen/core/functional.h>
+#include <ATen/core/stack.h>
 #include <c10/util/Optional.h>
 #include <torch/csrc/jit/fuser/compiler.h>
 #include <torch/csrc/jit/fuser/interface.h>
 #include <torch/csrc/jit/fuser/kernel_cache.h>
 #include <torch/csrc/jit/fuser/kernel_spec.h>
 #include <torch/csrc/jit/fuser/tensor_info.h>
-#include <ATen/core/stack.h>
-#include <torch/csrc/utils/functional.h>
 
 #include <algorithm>
 #include <iostream> // TODO: remove, debugging only
@@ -27,7 +27,7 @@ namespace fuser {
 static c10::optional<std::vector<int64_t>> getMapSize(
     const KernelSpec& spec,
     at::TensorList args,
-    at::IntList arg_subset) {
+    at::IntArrayRef arg_subset) {
   // TODO: this keeps reallocating map_size at every iteration, but we know
   // exactly how much storage do we need, so this could be fixed in-place at
   // every step. We're just missing a few functions for ATen, but the fix
@@ -69,7 +69,7 @@ static c10::optional<std::vector<int64_t>> canRunKernel(
     const KernelSpec& spec,
     at::TensorList args) {
   // Short-circuits on size mismatch
-  AT_CHECK(
+  TORCH_CHECK(
       args.size() == spec.inputChunks().size(),
       "Expected ",
       spec.inputChunks().size(),
@@ -97,29 +97,48 @@ static c10::optional<std::vector<int64_t>> canRunKernel(
 // (see above).
 // Note: Arguments are mutated by this call, although map_size is restored
 // to its original value.
-static void expandArgs(
+static bool expandArgs(
     const KernelSpec& spec,
     std::vector<at::Tensor>& args,
-    std::vector<int64_t>& map_size) {
+    std::vector<int64_t>& map_size, bool dry_run) {
+  bool has_broadcast = false;
   for (size_t i = 0; i < args.size(); ++i) {
     auto& arg = args[i];
     const auto& pdesc = spec.inputChunks()[i];
     if (pdesc.nSubTensors() == 1) {
       if (arg.sizes().equals(map_size))
         continue;
-      arg = arg.expand(map_size);
+      if (!dry_run) {
+        arg = arg.expand(map_size);
+        has_broadcast = true;
+      } else {
+        return true;
+      }
     } else {
       map_size.at(pdesc.dim()) *= pdesc.nSubTensors();
       if (!arg.sizes().equals(map_size)) {
-        arg = arg.expand(map_size);
+        if (!dry_run) {
+          arg = arg.expand(map_size);
+          has_broadcast = true;
+        } else {
+          return true;
+        }
       }
       map_size.at(pdesc.dim()) /= pdesc.nSubTensors();
     }
   }
+  return has_broadcast;
+}
+
+static bool shouldExpandArgs(
+    const KernelSpec& spec,
+    std::vector<at::Tensor>& args,
+    std::vector<int64_t>& map_size) {
+  return expandArgs(spec, args, map_size, /*dry_run=*/true);
 }
 
 // Note: assumes that inputs are 32-bit addressable
-static uint32_t computeNumel(const at::ArrayRef<int64_t>& sizes) {
+static uint32_t computeNumel(const at::ArrayRef<int64_t> sizes) {
   uint32_t result = 1;
 
   for (const auto& size : sizes)
@@ -141,8 +160,8 @@ static std::vector<int64_t> computeMapSize(
 // Tries to compress sizes and strides according to cont. Emits the result t
 // c_sizes, c_strides and throws an error on failure (if can't compress)
 static void compressContiguous(
-    const at::IntList& sizes,
-    const at::IntList& strides,
+    const at::IntArrayRef& sizes,
+    const at::IntArrayRef& strides,
     const std::vector<bool>& cont,
     uint32_t* c_sizes,
     uint32_t* c_strides) {
@@ -172,6 +191,7 @@ void launchFusion(
     const FusedKernel& fusion,
     const at::Device device,
     const at::ArrayRef<at::Tensor>& inputs,
+    const at::ArrayRef<IValue>& all_inputs,
     std::vector<at::Tensor>& outputs) {
   // Fails if fusion and given inputs disagree
   AT_ASSERT(inputs.size() == fusion.inputDesc().size());
@@ -191,7 +211,7 @@ void launchFusion(
   AT_ASSERT(inputs[0].numel() <= std::numeric_limits<uint32_t>::max());
 
   // Computes map_size, numel from the first input
-  at::IntList map_size;
+  at::IntArrayRef map_size;
   uint32_t numel;
   std::vector<int64_t> keep_alive_size;
   if (fusion.chunkDesc()[0].isNoop()) {
@@ -201,6 +221,13 @@ void launchFusion(
     keep_alive_size = computeMapSize(inputs[0], fusion.chunkDesc()[0]);
     map_size = keep_alive_size;
     numel = computeNumel(map_size);
+  }
+
+  // compute number of scalar inputs and convert them to float
+  std::vector<double> scalar_inputs;
+  scalar_inputs.reserve(all_inputs.size());
+  for (auto const &input: all_inputs){
+    if (input.isDouble()) scalar_inputs.push_back(input.to<float>());
   }
 
   // Computes the storage needed to store TensorInfo structs for inputs and
@@ -215,13 +242,13 @@ void launchFusion(
 
   // A vector of arguments to the kernel (numel, *input_desc_s, *output_desc_s)
   std::vector<void*> arguments;
-  arguments.reserve(3 + flat_inputs_size + flat_outputs_size);
+  arguments.reserve(3 + scalar_inputs.size() + flat_inputs_size + flat_outputs_size);
   arguments.push_back(&numel);
 
   auto addTensorInfoRaw = [&](const TensorDesc& desc,
                               void* data_ptr,
-                              at::IntList sizes,
-                              at::IntList strides) {
+                              at::IntArrayRef sizes,
+                              at::IntArrayRef strides) {
     const auto nDim = desc.nDim(); // NOTE: this is the compressed dim
     AT_ASSERT(nDim <= uncompressedDim); // We'd overflow the space otherwise
     auto ti = reinterpret_cast<TensorInfo*>(buffer_next);
@@ -246,7 +273,7 @@ void launchFusion(
       addTensorInfo(fusion.inputDesc()[i], tensor);
     } else {
       size_t chunk_offset = map_size[chunk.dim()] * tensor.stride(chunk.dim()) *
-          elementSize(tensor.type().scalarType());
+          elementSize(tensor.scalar_type());
       char* data_ptr = reinterpret_cast<char*>(tensor.data_ptr());
       for (size_t chunks = 0; chunks < chunk.nSubTensors(); ++chunks) {
         addTensorInfoRaw(
@@ -254,6 +281,10 @@ void launchFusion(
         data_ptr += chunk_offset;
       }
     }
+  }
+  // Adds scalar arguments
+  for (double &s: scalar_inputs){
+    arguments.push_back(&s);
   }
 
   // Adds (flattened) output arguments
@@ -282,11 +313,14 @@ void launchFusion(
       }
     }
   }
-
-  fusion.launch_raw(numel, arguments);
+  // Skip launching the kernel for zero-element tensor inputs
+  // launches are skipped, empty zero-sized output is returned
+  if (numel > 0) {
+    fusion.launch_raw(numel, arguments);
+  }
 }
 
-bool runFusion(const int64_t key, Stack& stack) {
+bool runFusion(const int64_t key, Stack& stack, std::string* code_out) {
   // Short-circuits if fusion isn't enabled
   if (!canFuseOnCPU() && !canFuseOnGPU())
     return false;
@@ -295,18 +329,27 @@ bool runFusion(const int64_t key, Stack& stack) {
   auto maybe_spec = retrieve(key);
   AT_ASSERT(maybe_spec);
   auto& spec = *(*maybe_spec);
-
   // Acquires inputs from stack
-  auto inputs = fmap(last(stack, spec.nInputs()), [](const IValue& i) {
-    return i.toTensor();
-  });
+  auto all_inputs = last(stack, spec.nInputs());
+  std::vector<at::Tensor> inputs;
+  inputs.reserve(spec.nTensorInputs());
+  // we know that tensor inputs are first
+  for (int64_t i = 0; i < spec.nTensorInputs(); i++) {
+    inputs.emplace_back(all_inputs[i].toTensor());
+  }
 
-  // Determines device to dispatch to. If there's a device mismatch in the
-  // inputs, we use the fallback (which should give a nice error message).
+  if (!inputs.at(0).defined()) {
+    return false;
+  }
+
+  // Determines device to dispatch to.
   at::Device device = inputs.at(0).device();
-  at::ScalarType dtype = inputs[0].type().scalarType();
+  // If there's a device mismatch in the inputs or if one of the input is a
+  // sparse tensor, we use the fallback (which should give a nice error
+  // message).
   for (const auto& t : at::TensorList(inputs).slice(1)) {
-    if (t.device() != device) {
+    // Sparse tensor could not by supported by CUDA fusion, so we bail out.
+    if (t.device() != device || t.is_sparse()) {
       return false;
     }
   }
@@ -323,7 +366,12 @@ bool runFusion(const int64_t key, Stack& stack) {
   // Tries to run fallback if map size can't be computed
   if (!maybe_map_size)
     return false;
-  expandArgs(spec, inputs, *maybe_map_size);
+  if (spec.hasRandom()) {
+    bool hasBroadcast = shouldExpandArgs(spec, inputs, *maybe_map_size);
+    if (hasBroadcast)
+      return false;
+  }
+  expandArgs(spec, inputs, *maybe_map_size, /*dry_run=*/false);
 
   // Retrieves the kernel, compiling (and caching) if necessary
   ArgSpec arg_spec{inputs, device.index()};
@@ -335,9 +383,13 @@ bool runFusion(const int64_t key, Stack& stack) {
   maybe_kernel = spec.findKernel(arg_spec);
   AT_ASSERT(maybe_kernel);
 
+  if (code_out) {
+    *code_out = maybe_kernel.value()->code();
+  }
+
   // Launches fusion
   std::vector<at::Tensor> outputs;
-  launchFusion(*(*maybe_kernel), device, inputs, outputs);
+  launchFusion(*(*maybe_kernel), device, inputs, all_inputs, outputs);
 
   // Updates stack
   drop(stack, spec.nInputs());

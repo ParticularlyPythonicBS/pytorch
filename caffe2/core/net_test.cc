@@ -824,16 +824,20 @@ class AsyncErrorOp final : public Operator<CPUContext> {
       if (thread_) {
         thread_->join();
       }
-      thread_ = caffe2::make_unique<std::thread>([this]() {
+      thread_ = std::make_unique<std::thread>([this]() {
         try {
           std::this_thread::sleep_for(std::chrono::seconds(sleep_time_s_));
           if (throw_) {
             throw std::logic_error(error_msg_);
           } else {
-            event().SetFinished(error_msg_.c_str());
+            if (!cancel_.test_and_set()) {
+              event().SetFinished(error_msg_.c_str());
+            }
           }
         } catch (...) {
-          event().SetFinishedWithException(error_msg_.c_str());
+          if (!cancel_.test_and_set()) {
+            event().SetFinishedWithException(error_msg_.c_str());
+          }
         }
       });
       return true;
@@ -844,7 +848,11 @@ class AsyncErrorOp final : public Operator<CPUContext> {
     return true;
   }
 
-  ~AsyncErrorOp() {
+  void CancelAsyncCallback() override {
+    cancel_.test_and_set();
+  }
+
+  ~AsyncErrorOp() override {
     if (thread_) {
       thread_->join();
     }
@@ -856,6 +864,7 @@ class AsyncErrorOp final : public Operator<CPUContext> {
   bool fail_in_sync_;
   int sleep_time_s_;
   std::string error_msg_;
+  std::atomic_flag cancel_ = ATOMIC_FLAG_INIT;
 };
 
 REGISTER_CPU_OPERATOR(AsyncErrorOp, AsyncErrorOp);
@@ -989,7 +998,7 @@ class SyncErrorOp final : public Operator<CPUContext> {
     }
   }
 
-  ~SyncErrorOp() {}
+  ~SyncErrorOp() override {}
 
  private:
   bool fail_;
@@ -1041,6 +1050,64 @@ TEST(NetTest, ChainErrorTest) {
 
   net = ChainErrorNet(&ws, "net2", /*throw_*/ false);
   ASSERT_FALSE(net->Run());
+}
+
+void testProfDAGNetErrorCase(bool test_error) {
+  std::string spec_template = R"DOC(
+        name: "prof_dag_error_test_net"
+        type: "prof_dag"
+        external_input: "in"
+        op {
+          input: "in"
+          output: "hidden"
+          type: "SyncErrorOp"
+          arg {
+            name: "fail"
+            i: <FAIL>
+          }
+          arg {
+            name: "throw"
+            i: 0
+          }
+        }
+        op {
+          input: "hidden"
+          output: "out"
+          type: "SyncErrorOp"
+          arg {
+            name: "fail"
+            i: 0
+          }
+        }
+  )DOC";
+
+  Workspace ws;
+  ws.CreateBlob("in");
+
+  NetDef net_def;
+  std::string net_spec = spec_template;
+  ReplaceAll(net_spec, "<FAIL>", test_error ? "1" : "0");
+  CAFFE_ENFORCE(TextFormat::ParseFromString(net_spec, &net_def));
+  auto net = CreateNet(net_def, &ws);
+
+  // with failing op - net runs return false, without - true
+  for (auto num_runs = 0; num_runs < 10; ++num_runs) {
+    auto ret = net->Run();
+    ASSERT_TRUE(test_error ? !ret : ret);
+  }
+
+  // with failing op - prof_dag handles invalid runs and returns empty stats,
+  // without - returns stats for each op
+  auto* prof_dag = dynamic_cast_if_rtti<AsyncNetBase*>(net.get());
+  CHECK_NOTNULL(prof_dag);
+  auto stats_proto = prof_dag->GetPerOperatorCost();
+  ASSERT_EQ(
+      stats_proto.stats_size(), test_error ? 0 : net->GetOperators().size());
+}
+
+TEST(NetTest, ProfDAGNetErrorTest) {
+  testProfDAGNetErrorCase(/*test_error=*/false);
+  testProfDAGNetErrorCase(/*test_error=*/true);
 }
 
 } // namespace caffe2

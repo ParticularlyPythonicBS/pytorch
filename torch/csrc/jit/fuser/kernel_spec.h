@@ -61,6 +61,7 @@ struct TORCH_API KernelSpec {
         graph_{_graph},
         code_{_graph},
         nInputs_{_graph->inputs().size()},
+        nTensorInputs_{},
         inputBroadcastGroups_{},
         inputChunks_{},
         has_random_{false},
@@ -71,6 +72,10 @@ struct TORCH_API KernelSpec {
         break;
       }
     }
+    nTensorInputs_ = std::count_if(
+        graph_->inputs().begin(), graph_->inputs().end(), [](const Value* v) {
+          return v->type()->isSubtypeOf(TensorType::get());
+        });
   }
 
   // Getters
@@ -85,6 +90,9 @@ struct TORCH_API KernelSpec {
   }
   int64_t nInputs() const {
     return nInputs_;
+  }
+  int64_t nTensorInputs() const {
+    return nTensorInputs_;
   }
 
   std::vector<std::vector<int64_t>>& inputBroadcastGroups() {
@@ -125,6 +133,7 @@ struct TORCH_API KernelSpec {
   std::shared_ptr<Graph> graph_;
   Code code_;
   uint64_t nInputs_;
+  uint64_t nTensorInputs_;
   std::vector<std::vector<int64_t>> inputBroadcastGroups_;
   std::vector<PartitionInfo> inputChunks_;
   bool has_random_;

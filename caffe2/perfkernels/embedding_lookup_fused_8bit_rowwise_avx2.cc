@@ -6,30 +6,27 @@
 //// --------------------------
 
 #include <c10/util/Half.h>
-#include <c10/util/Logging.h>
 #include <immintrin.h>
-#include <cassert>
-
 namespace caffe2 {
 
 template <bool IS_WEIGHT_POSITIONAL>
-static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
+static bool Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const float* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  const int32_t prefdist_T0 = 16;
-  const int32_t fused_block_size = block_size + 2;
+  const int prefdist_T0 = 16;
+  const int fused_block_size = block_size + 2;
+  int dataInd = 0;
   if (block_size == 128) {
     // unrolling 16 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
@@ -47,28 +44,28 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
       __m256 vop104 = _mm256_setzero_ps();
       __m256 vop112 = _mm256_setzero_ps();
       __m256 vop120 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const float* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -150,8 +147,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
     }
   } else if (block_size == 64) {
     // unrolling 8 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
@@ -161,28 +157,28 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
       __m256 vop40 = _mm256_setzero_ps();
       __m256 vop48 = _mm256_setzero_ps();
       __m256 vop56 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const float* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -228,35 +224,34 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
     }
   } else if (block_size == 32) {
     // unrolling 4 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
       __m256 vop16 = _mm256_setzero_ps();
       __m256 vop24 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const float* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -284,33 +279,32 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
     }
   } else if (block_size == 16) {
     // unrolling 2 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const float* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -329,8 +323,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
     }
   } else {
     // generic code
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       int64_t j = 0;
       for (; j + 8 <= block_size; j += 8) {
@@ -339,28 +332,28 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
       for (; j < block_size; j++) {
         op[j] = 0.0f;
       }
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const float* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         j = 0;
         for (; j + 8 <= block_size; j += 8) {
@@ -372,7 +365,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
               reinterpret_cast<const char*>(&ip_next_T0[j]), _MM_HINT_T0);
         }
         for (; j < block_size; j++) {
-          op[j] += wgt * ip[j];
+          op[j] = std::fma(wgt, ip[j], op[j]);
         }
       }
       if (normalize_by_lengths && lengths[rangeIndex]) {
@@ -389,19 +382,20 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma(
       }
     }
   }
+  return dataInd == index_size;
 }
-void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float_false__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int32_t_float_float_false__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const float* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma<false>(
+  return Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma<false>(
       block_size,
       output_size,
       index_size,
@@ -413,18 +407,18 @@ void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float_false__avx2_fma(
       normalize_by_lengths,
       out);
 }
-void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float_true__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int32_t_float_float_true__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const float* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma<true>(
+  return Fused8BitRowwiseEmbeddingLookup_int32_t_float_float__avx2_fma<true>(
       block_size,
       output_size,
       index_size,
@@ -438,7 +432,7 @@ void Fused8BitRowwiseEmbeddingLookup_int32_t_float_float_true__avx2_fma(
 }
 
 template <bool IS_WEIGHT_POSITIONAL>
-static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
+static bool Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -451,9 +445,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
     float* out) {
   const int64_t prefdist_T0 = 16;
   const int64_t fused_block_size = block_size + 2;
+  int64_t dataInd = 0;
   if (block_size == 128) {
     // unrolling 16 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
@@ -472,17 +466,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
       __m256 vop104 = _mm256_setzero_ps();
       __m256 vop112 = _mm256_setzero_ps();
       __m256 vop120 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -493,7 +485,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -575,7 +569,6 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
     }
   } else if (block_size == 64) {
     // unrolling 8 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
@@ -586,17 +579,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
       __m256 vop40 = _mm256_setzero_ps();
       __m256 vop48 = _mm256_setzero_ps();
       __m256 vop56 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -607,7 +598,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -653,24 +646,21 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
     }
   } else if (block_size == 32) {
     // unrolling 4 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
       __m256 vop16 = _mm256_setzero_ps();
       __m256 vop24 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -681,7 +671,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -709,22 +701,19 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
     }
   } else if (block_size == 16) {
     // unrolling 2 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -735,7 +724,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(vwgt, _mm256_loadu_ps(ip + (0)), vop0);
         _mm_prefetch(
@@ -754,7 +745,6 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
     }
   } else {
     // generic code
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       int64_t j = 0;
@@ -764,17 +754,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
       for (; j < block_size; j++) {
         op[j] = 0.0f;
       }
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -785,7 +773,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const float* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         j = 0;
         for (; j + 8 <= block_size; j += 8) {
@@ -797,7 +787,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
               reinterpret_cast<const char*>(&ip_next_T0[j]), _MM_HINT_T0);
         }
         for (; j < block_size; j++) {
-          op[j] += wgt * ip[j];
+          op[j] = std::fma(wgt, ip[j], op[j]);
         }
       }
       if (normalize_by_lengths && lengths[rangeIndex]) {
@@ -814,8 +804,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma(
       }
     }
   }
+  return dataInd == index_size;
 }
-void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_false__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_false__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -826,7 +817,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_false__avx2_fma(
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma<false>(
+  return Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma<false>(
       block_size,
       output_size,
       index_size,
@@ -838,7 +829,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_false__avx2_fma(
       normalize_by_lengths,
       out);
 }
-void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_true__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_true__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -849,7 +840,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_true__avx2_fma(
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma<true>(
+  return Fused8BitRowwiseEmbeddingLookup_int64_t_float_float__avx2_fma<true>(
       block_size,
       output_size,
       index_size,
@@ -863,23 +854,23 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_float_float_true__avx2_fma(
 }
 
 template <bool IS_WEIGHT_POSITIONAL>
-static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
+static bool Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const at::Half* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  const int32_t prefdist_T0 = 16;
-  const int32_t fused_block_size = block_size + 4;
+  const int prefdist_T0 = 16;
+  const int fused_block_size = block_size + 4;
+  int dataInd = 0;
   if (block_size == 128) {
     // unrolling 16 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
@@ -897,28 +888,28 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
       __m256 vop104 = _mm256_setzero_ps();
       __m256 vop112 = _mm256_setzero_ps();
       __m256 vop120 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const at::Half* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1060,8 +1051,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
     }
   } else if (block_size == 64) {
     // unrolling 8 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
@@ -1071,28 +1061,28 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
       __m256 vop40 = _mm256_setzero_ps();
       __m256 vop48 = _mm256_setzero_ps();
       __m256 vop56 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const at::Half* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1168,35 +1158,34 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
     }
   } else if (block_size == 32) {
     // unrolling 4 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
       __m256 vop16 = _mm256_setzero_ps();
       __m256 vop24 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const at::Half* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1239,33 +1228,32 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
     }
   } else if (block_size == 16) {
     // unrolling 2 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const at::Half* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1292,8 +1280,8 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
     }
   } else {
     // generic code
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    alignas(64) at::Half vtmp1[8] = {0};
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       int64_t j = 0;
       for (; j + 8 <= block_size; j += 8) {
@@ -1302,28 +1290,28 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
       for (; j < block_size; j++) {
         op[j] = 0.0f;
       }
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         const at::Half* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         j = 0;
         for (; j + 8 <= block_size; j += 8) {
@@ -1337,11 +1325,11 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
           _mm_prefetch(
               reinterpret_cast<const char*>(&ip_next_T0[j]), _MM_HINT_T0);
         }
-        alignas(64) at::Half vtmp1[8];
         for (; j < block_size; j++) {
           vtmp1[0] = ip[j];
-          __m256 vtmp2 = _mm256_cvtph_ps(*((__m128i*)vtmp1));
-          op[j] += wgt * ((float*)(&vtmp2))[0];
+          __m256 vtmp2 =
+              _mm256_cvtph_ps(*(reinterpret_cast<const __m128i*>(vtmp1)));
+          op[j] = std::fma(wgt, ((float*)(&vtmp2))[0], op[j]);
         }
       }
       if (normalize_by_lengths && lengths[rangeIndex]) {
@@ -1358,19 +1346,20 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma(
       }
     }
   }
+  return dataInd == index_size;
 }
-void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float_false__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int32_t_half_float_false__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const at::Half* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma<false>(
+  return Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma<false>(
       block_size,
       output_size,
       index_size,
@@ -1382,18 +1371,18 @@ void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float_false__avx2_fma(
       normalize_by_lengths,
       out);
 }
-void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float_true__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int32_t_half_float_true__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const at::Half* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma<true>(
+  return Fused8BitRowwiseEmbeddingLookup_int32_t_half_float__avx2_fma<true>(
       block_size,
       output_size,
       index_size,
@@ -1407,7 +1396,7 @@ void Fused8BitRowwiseEmbeddingLookup_int32_t_half_float_true__avx2_fma(
 }
 
 template <bool IS_WEIGHT_POSITIONAL>
-static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
+static bool Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -1420,9 +1409,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
     float* out) {
   const int64_t prefdist_T0 = 16;
   const int64_t fused_block_size = block_size + 4;
+  int64_t dataInd = 0;
   if (block_size == 128) {
     // unrolling 16 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
@@ -1441,17 +1430,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
       __m256 vop104 = _mm256_setzero_ps();
       __m256 vop112 = _mm256_setzero_ps();
       __m256 vop120 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -1462,7 +1449,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1604,7 +1593,6 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
     }
   } else if (block_size == 64) {
     // unrolling 8 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
@@ -1615,17 +1603,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
       __m256 vop40 = _mm256_setzero_ps();
       __m256 vop48 = _mm256_setzero_ps();
       __m256 vop56 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -1636,7 +1622,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1712,24 +1700,21 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
     }
   } else if (block_size == 32) {
     // unrolling 4 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
       __m256 vop16 = _mm256_setzero_ps();
       __m256 vop24 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -1740,7 +1725,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1783,22 +1770,19 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
     }
   } else if (block_size == 16) {
     // unrolling 2 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -1809,7 +1793,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -1836,7 +1822,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
     }
   } else {
     // generic code
-    int64_t dataInd = 0;
+    alignas(64) at::Half vtmp1[8] = {0};
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       int64_t j = 0;
@@ -1846,17 +1832,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
       for (; j < block_size; j++) {
         op[j] = 0.0f;
       }
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         if (weights) {
           wgt = weights[IS_WEIGHT_POSITIONAL ? (dataInd - start) : dataInd];
@@ -1867,7 +1851,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const at::Half* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         j = 0;
         for (; j + 8 <= block_size; j += 8) {
@@ -1881,11 +1867,11 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
           _mm_prefetch(
               reinterpret_cast<const char*>(&ip_next_T0[j]), _MM_HINT_T0);
         }
-        alignas(64) at::Half vtmp1[8];
         for (; j < block_size; j++) {
           vtmp1[0] = ip[j];
-          __m256 vtmp2 = _mm256_cvtph_ps(*((__m128i*)vtmp1));
-          op[j] += wgt * ((float*)(&vtmp2))[0];
+          __m256 vtmp2 =
+              _mm256_cvtph_ps(*(reinterpret_cast<const __m128i*>(vtmp1)));
+          op[j] = std::fma(wgt, ((float*)(&vtmp2))[0], op[j]);
         }
       }
       if (normalize_by_lengths && lengths[rangeIndex]) {
@@ -1902,8 +1888,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma(
       }
     }
   }
+  return dataInd == index_size;
 }
-void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_false__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_false__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -1914,7 +1901,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_false__avx2_fma(
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma<false>(
+  return Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma<false>(
       block_size,
       output_size,
       index_size,
@@ -1926,7 +1913,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_false__avx2_fma(
       normalize_by_lengths,
       out);
 }
-void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_true__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_true__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -1937,7 +1924,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_true__avx2_fma(
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma<true>(
+  return Fused8BitRowwiseEmbeddingLookup_int64_t_half_float__avx2_fma<true>(
       block_size,
       output_size,
       index_size,
@@ -1951,23 +1938,23 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_half_float_true__avx2_fma(
 }
 
 template <bool IS_WEIGHT_POSITIONAL>
-static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
+static bool Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const uint8_t* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  const int32_t prefdist_T0 = 16;
-  const int32_t fused_block_size = block_size + 8;
+  const int prefdist_T0 = 16;
+  const int fused_block_size = block_size + 8;
+  int dataInd = 0;
   if (block_size == 128) {
     // unrolling 16 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
@@ -1985,17 +1972,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
       __m256 vop104 = _mm256_setzero_ps();
       __m256 vop112 = _mm256_setzero_ps();
       __m256 vop120 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2008,11 +1993,13 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
         __m256 vbio = _mm256_set1_ps(bio);
         __m256 vwgt = _mm256_set1_ps(wgt);
         const uint8_t* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2152,8 +2139,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
     }
   } else if (block_size == 64) {
     // unrolling 8 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
@@ -2163,17 +2149,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
       __m256 vop40 = _mm256_setzero_ps();
       __m256 vop48 = _mm256_setzero_ps();
       __m256 vop56 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2186,11 +2170,13 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
         __m256 vbio = _mm256_set1_ps(bio);
         __m256 vwgt = _mm256_set1_ps(wgt);
         const uint8_t* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2265,24 +2251,21 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
     }
   } else if (block_size == 32) {
     // unrolling 4 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
       __m256 vop16 = _mm256_setzero_ps();
       __m256 vop24 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2295,11 +2278,13 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
         __m256 vbio = _mm256_set1_ps(bio);
         __m256 vwgt = _mm256_set1_ps(wgt);
         const uint8_t* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2342,22 +2327,19 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
     }
   } else if (block_size == 16) {
     // unrolling 2 times
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2370,11 +2352,13 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
         __m256 vbio = _mm256_set1_ps(bio);
         __m256 vwgt = _mm256_set1_ps(wgt);
         const uint8_t* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2401,8 +2385,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
     }
   } else {
     // generic code
-    int32_t dataInd = 0;
-    for (int32_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
+    for (int rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       int64_t j = 0;
       for (; j + 8 <= block_size; j += 8) {
@@ -2411,17 +2394,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
       for (; j < block_size; j++) {
         op[j] = 0.0f;
       }
-      for (int32_t start = dataInd; dataInd < start + lengths[rangeIndex];
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
+      for (int start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int32_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        const int idx = indices[dataInd];
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2434,11 +2415,13 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
         __m256 vbio = _mm256_set1_ps(bio);
         __m256 vwgt = _mm256_set1_ps(wgt);
         const uint8_t* ip = &input[idx * fused_block_size];
-        const int32_t next_T0 = (dataInd < index_size - prefdist_T0)
+        const int next_T0 = (dataInd < index_size - prefdist_T0)
             ? (dataInd + prefdist_T0)
             : dataInd;
-        const int32_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        const int idx_pref_T0 = indices[next_T0];
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         j = 0;
         for (; j + 8 <= block_size; j += 8) {
@@ -2453,7 +2436,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
               reinterpret_cast<const char*>(&ip_next_T0[j]), _MM_HINT_T0);
         }
         for (; j < block_size; j++) {
-          op[j] += wgt * ((float)ip[j]) + bio;
+          op[j] = std::fma(wgt, (float)ip[j], bio + op[j]);
         }
       }
       if (normalize_by_lengths && lengths[rangeIndex]) {
@@ -2470,19 +2453,20 @@ static void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma(
       }
     }
   }
+  return dataInd == index_size;
 }
-void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float_false__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float_false__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const uint8_t* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma<false>(
+  return Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma<false>(
       block_size,
       output_size,
       index_size,
@@ -2494,18 +2478,18 @@ void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float_false__avx2_fma(
       normalize_by_lengths,
       out);
 }
-void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float_true__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float_true__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
     const int64_t data_size,
     const uint8_t* input,
-    const int32_t* indices,
+    const int* indices,
     const int* lengths,
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma<true>(
+  return Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float__avx2_fma<true>(
       block_size,
       output_size,
       index_size,
@@ -2519,7 +2503,7 @@ void Fused8BitRowwiseEmbeddingLookup_int32_t_uint8_t_float_true__avx2_fma(
 }
 
 template <bool IS_WEIGHT_POSITIONAL>
-static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
+static bool Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -2532,9 +2516,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
     float* out) {
   const int64_t prefdist_T0 = 16;
   const int64_t fused_block_size = block_size + 8;
+  int64_t dataInd = 0;
   if (block_size == 128) {
     // unrolling 16 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
@@ -2553,17 +2537,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
       __m256 vop104 = _mm256_setzero_ps();
       __m256 vop112 = _mm256_setzero_ps();
       __m256 vop120 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2580,7 +2562,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2720,7 +2704,6 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
     }
   } else if (block_size == 64) {
     // unrolling 8 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
@@ -2731,17 +2714,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
       __m256 vop40 = _mm256_setzero_ps();
       __m256 vop48 = _mm256_setzero_ps();
       __m256 vop56 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2758,7 +2739,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2833,24 +2816,21 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
     }
   } else if (block_size == 32) {
     // unrolling 4 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
       __m256 vop16 = _mm256_setzero_ps();
       __m256 vop24 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2867,7 +2847,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2910,22 +2892,19 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
     }
   } else if (block_size == 16) {
     // unrolling 2 times
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       __m256 vop0 = _mm256_setzero_ps();
       __m256 vop8 = _mm256_setzero_ps();
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -2942,7 +2921,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         vop0 = _mm256_fmadd_ps(
             vwgt,
@@ -2969,7 +2950,6 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
     }
   } else {
     // generic code
-    int64_t dataInd = 0;
     for (int64_t rangeIndex = 0; rangeIndex < output_size; ++rangeIndex) {
       float* op = &out[rangeIndex * block_size];
       int64_t j = 0;
@@ -2979,17 +2959,15 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
       for (; j < block_size; j++) {
         op[j] = 0.0f;
       }
+      if (dataInd + lengths[rangeIndex] > index_size) {
+        return false;
+      }
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
         const int64_t idx = indices[dataInd];
-        CAFFE_ENFORCE(
-            idx >= 0 && idx < data_size,
-            "Index ",
-            dataInd,
-            " is out of bounds: ",
-            idx,
-            ", range 0 to ",
-            data_size);
+        if (idx < 0 || idx >= data_size) {
+          return false;
+        }
         float wgt = 1.f;
         float bio;
         if (weights) {
@@ -3006,7 +2984,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
             ? (dataInd + prefdist_T0)
             : dataInd;
         const int64_t idx_pref_T0 = indices[next_T0];
-        CAFFE_ENFORCE(idx_pref_T0 >= 0 && idx_pref_T0 < data_size);
+        if (idx_pref_T0 < 0 || idx_pref_T0 >= data_size) {
+          return false;
+        }
         const uint8_t* ip_next_T0 = &input[idx_pref_T0 * fused_block_size];
         j = 0;
         for (; j + 8 <= block_size; j += 8) {
@@ -3021,7 +3001,7 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
               reinterpret_cast<const char*>(&ip_next_T0[j]), _MM_HINT_T0);
         }
         for (; j < block_size; j++) {
-          op[j] += wgt * ((float)ip[j]) + bio;
+          op[j] = std::fma(wgt, (float)ip[j], bio + op[j]);
         }
       }
       if (normalize_by_lengths && lengths[rangeIndex]) {
@@ -3038,8 +3018,9 @@ static void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma(
       }
     }
   }
+  return dataInd == index_size;
 }
-void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_false__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_false__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -3050,7 +3031,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_false__avx2_fma(
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma<false>(
+  return Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma<false>(
       block_size,
       output_size,
       index_size,
@@ -3062,7 +3043,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_false__avx2_fma(
       normalize_by_lengths,
       out);
 }
-void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_true__avx2_fma(
+bool Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_true__avx2_fma(
     const int64_t block_size,
     const int64_t output_size,
     const int64_t index_size,
@@ -3073,7 +3054,7 @@ void Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float_true__avx2_fma(
     const float* weights,
     bool normalize_by_lengths,
     float* out) {
-  Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma<true>(
+  return Fused8BitRowwiseEmbeddingLookup_int64_t_uint8_t_float__avx2_fma<true>(
       block_size,
       output_size,
       index_size,

@@ -1,10 +1,24 @@
+if (INTERN_BUILD_MOBILE AND NOT BUILD_CAFFE2_MOBILE)
+  list(APPEND Caffe2_CPU_SRCS
+    utils/string_utils.cc
+    utils/threadpool/pthreadpool.cc
+    utils/threadpool/pthreadpool_impl.cc
+    utils/threadpool/ThreadPool.cc
+    utils/threadpool/ThreadPoolMobile.cc
+  )
+  set(Caffe2_CPU_SRCS ${Caffe2_CPU_SRCS} PARENT_SCOPE)
+  return()
+endif()
+
 list(APPEND Caffe2_CPU_SRCS
   utils/bench_utils.cc
   utils/cpuid.cc
+  utils/math/broadcast.cc
   utils/math/elementwise.cc
   utils/math/reduce.cc
+  utils/math/transpose.cc
+  utils/math/utils.cc
   utils/math_cpu.cc
-  utils/math_utils.cc
   utils/murmur_hash3.cc
   utils/proto_convert.cc
   utils/proto_utils.cc
@@ -12,7 +26,6 @@ list(APPEND Caffe2_CPU_SRCS
   utils/signal_handler.cc
   utils/smart_tensor_printer.cc
   utils/string_utils.cc
-  utils/thread_name.cc
   utils/threadpool/ThreadPool.cc)
 
 # ---[ threadpool/pthreadpool* is a local modification of the NNPACK
@@ -22,18 +35,23 @@ if (NOT MSVC)
   set(Caffe2_CPU_SRCS ${Caffe2_CPU_SRCS}
           utils/threadpool/pthreadpool.cc
           utils/threadpool/pthreadpool_impl.cc
+          utils/threadpool/ThreadPoolMobile.cc
           )
 endif()
 
 set(Caffe2_GPU_SRCS ${Caffe2_GPU_SRCS}
+        utils/math/broadcast.cu
         utils/math/elementwise.cu
         utils/math/reduce.cu
+        utils/math/transpose.cu
         utils/math_gpu.cu
         )
 
 set(Caffe2_HIP_SRCS ${Caffe2_HIP_SRCS}
+        utils/math/hip/broadcast.hip
         utils/math/hip/elementwise.hip
         utils/math/hip/reduce.hip
+        utils/math/hip/transpose.hip
         utils/hip/math_gpu.hip
         )
 

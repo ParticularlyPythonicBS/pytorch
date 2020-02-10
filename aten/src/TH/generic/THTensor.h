@@ -18,6 +18,8 @@
 #define THShortTensor THTensor
 #define THIntTensor THTensor
 #define THLongTensor THTensor
+#define THBoolTensor THTensor
+#define THBFloat16Tensor THTensor
 
 /**** access methods ****/
 TH_API THStorage* THTensor_(storage)(const THTensor *self);
@@ -61,7 +63,6 @@ TH_API THTensor *THTensor_(newContiguous)(THTensor *tensor);
 TH_API THTensor *THTensor_(newSelect)(THTensor *tensor, int dimension_, int64_t sliceIndex_);
 TH_API THTensor *THTensor_(newNarrow)(THTensor *tensor, int dimension_, int64_t firstIndex_, int64_t size_);
 TH_API THTensor *THTensor_(newTranspose)(THTensor *tensor, int dimension1_, int dimension2_);
-TH_API THTensor *THTensor_(newUnfold)(THTensor *tensor, int dimension_, int64_t size_, int64_t step_);
 
 // resize* methods simply resize the storage. So they may not retain the current data at current indices.
 // This is especially likely to happen when the tensor is not contiguous. In general, if you still need the
@@ -97,15 +98,12 @@ TH_API void THTensor_(narrow)(THTensor *self, THTensor *src, int dimension_, int
 TH_API void THTensor_(select)(THTensor *self, THTensor *src, int dimension_, int64_t sliceIndex_);
 TH_API void THTensor_(transpose)(THTensor *self, THTensor *src, int dimension1_, int dimension2_);
 TH_API int THTensor_(isTransposed)(const THTensor *self);
-TH_API void THTensor_(unfold)(THTensor *self, THTensor *src, int dimension_, int64_t size_, int64_t step_);
 
-TH_API void THTensor_(squeeze)(THTensor *self, THTensor *src);
 TH_API void THTensor_(squeeze1d)(THTensor *self, THTensor *src, int dimension_);
 TH_API void THTensor_(unsqueeze1d)(THTensor *self, THTensor *src, int dimension_);
 
 TH_API int THTensor_(isContiguous)(const THTensor *self);
 TH_API int THTensor_(isSameSizeAs)(const THTensor *self, const THTensor *src);
-TH_API int THTensor_(isSetTo)(const THTensor *self, const THTensor *src);
 TH_API ptrdiff_t THTensor_(nElement)(const THTensor *self);
 
 TH_API void THTensor_(retain)(THTensor *self);

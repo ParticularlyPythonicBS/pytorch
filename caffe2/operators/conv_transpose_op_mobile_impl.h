@@ -5,11 +5,7 @@
 
 #include "caffe2/core/common.h"
 
-#ifndef C10_MOBILE
-#error "mobile build state not defined"
-#endif
-
-#if C10_MOBILE
+#ifdef C10_MOBILE
 
 #include "caffe2/core/logging.h"
 #include "caffe2/operators/conv_op_shared.h"
@@ -18,7 +14,7 @@
 #include "caffe2/utils/eigen_utils.h"
 #include "caffe2/utils/fixed_divisor.h"
 #include "caffe2/utils/math.h"
-#include "caffe2/utils/math_utils.h"
+#include "caffe2/utils/math/utils.h"
 
 C10_DECLARE_bool(caffe2_force_shared_col_buffer);
 
@@ -554,6 +550,11 @@ bool ConvTransposeMobileOp<T, Context>::RunOnDeviceWithOrderNCHW() {
 
   auto sizes = ConvTransposeUnpoolBase<Context>::GetOutputSize(X, C);
   Tensor* Y = Output(0, sizes, at::dtype<T>());
+
+  if (X.numel() == 0) {
+    VLOG(2) << "Number of elements is 0 in ConvTrasposeOp";
+    return true;
+  }
 
   const int outputH = Y->dim32(2);
   const int outputW = Y->dim32(3);

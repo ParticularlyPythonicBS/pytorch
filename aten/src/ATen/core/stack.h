@@ -29,6 +29,9 @@ using Operation = std::function<int(Stack&)>;
 static inline IValue& peek(Stack& stack, size_t i, size_t N) {
   return *(stack.end() - N + i);
 }
+static inline const IValue& peek(const Stack& stack, size_t i, size_t N) {
+  return *(stack.end() - N + i);
+}
 // treat the last N elements of the stack as a list, looking up the
 // slice starting at index i and having length len
 static inline at::ArrayRef<IValue> peekSlice(
@@ -49,6 +52,15 @@ static inline IValue pop(Stack& stack) {
   stack.pop_back();
   return r;
 }
+static inline std::vector<IValue> pop(Stack& stack, size_t n) {
+  std::vector<IValue> result;
+  result.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    result.push_back(std::move(peek(stack, i, n)));
+  }
+  drop(stack, n);
+  return result;
+}
 
 // variadic pop:
 // int64_t a; at::Tensor b;
@@ -65,9 +77,27 @@ static inline void pop(Stack& stack, Types&... args) {
   (void)result;
   drop(stack, N);
 }
+template <typename Type>
+static inline void push_one(Stack& stack, Type&& arg) {
+  stack.emplace_back(std::forward<Type>(arg));
+}
+
+static inline void push_one(Stack& stack, c10::TensorOptions options) {
+  stack.emplace_back(c10::typeMetaToScalarType(options.dtype()));
+  stack.emplace_back(options.layout());
+  stack.emplace_back(options.device());
+  stack.emplace_back(options.pinned_memory());
+}
+
 template <typename... Types>
 static inline void push(Stack& stack, Types&&... args) {
-  std::initializer_list<int>{(stack.emplace_back(std::forward<Types>(args)), 0)...};
+  (void)std::initializer_list<int>{(push_one(stack, args), 0)...};
+}
+template <class T>
+static inline void push_list_elements(Stack& stack, const c10::List<T>& elements) {
+  for (T elem : elements) {
+    stack.push_back(std::move(elem));
+  }
 }
 
 // The packer here is carefully written not to make any unnecessary

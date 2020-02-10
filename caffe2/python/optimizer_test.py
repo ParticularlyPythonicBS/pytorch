@@ -200,6 +200,25 @@ class TestAdam(OptimizerTestBase, LRModificationTestBase, TestCase):
             workspace.FetchBlob(param)
 
 
+class TestSparseRAdam(OptimizerTestBase, LRModificationTestBase, TestCase):
+    def build_optimizer(self, model, **kwargs):
+        self._skip_gpu = True
+        return build_adam(model, base_learning_rate=0.1, enableRAdam=True, **kwargs)
+
+    def check_optimizer(self, optimizer):
+        self.assertTrue(optimizer.get_auxiliary_parameters().shared)
+        self.assertTrue(optimizer.get_auxiliary_parameters().local)
+        self.assertTrue(workspace.HasBlob("optimizer_iteration"))
+        iteration_tensor = workspace.FetchBlob("optimizer_iteration")
+        np.testing.assert_allclose(np.array([2000]),
+                                   iteration_tensor,
+                                   atol=1e-5)
+        for param in optimizer.get_auxiliary_parameters().shared:
+            workspace.FetchBlob(param)
+        for param in optimizer.get_auxiliary_parameters().local:
+            workspace.FetchBlob(param)
+
+
 class TestYellowFin(OptimizerTestBase, TestCase):
     # YellowFin: An automatic tuner for momentum SGD
     # (https://arxiv.org/abs/1706.03471)
@@ -454,8 +473,7 @@ class TestYellowFin(OptimizerTestBase, TestCase):
                 )
 
     @unittest.skip("Results might vary too much. Only for individual use.")
-    @unittest.skipIf(not workspace.has_gpu_support
-                    and not workspace.has_hip_support, "No gpu support")
+    @unittest.skipIf(not workspace.has_gpu_support, "No gpu support")
     def test_caffe2_gpu_vs_numpy(self):
         n_dim = 1000000
         n_iter = 50

@@ -34,15 +34,18 @@ struct TORCH_API TensorDesc {
   // Delegating constructors
   TensorDesc(
       const at::ScalarType& type,
-      const at::IntList& sizes,
-      const at::IntList& strides)
+      const at::IntArrayRef& sizes,
+      const at::IntArrayRef& strides)
       : TensorDesc(type, TensorDesc::findContiguous(sizes, strides)) {}
 
   TensorDesc(const at::Tensor& t)
-      : TensorDesc(t.type().scalarType(), t.sizes(), t.strides()) {}
+      : TensorDesc(t.scalar_type(), t.sizes(), t.strides()) {}
 
-  TensorDesc(const c10::CompleteTensorTypePtr& type)
-      : TensorDesc(type->scalarType(), type->sizes(), type->strides()) {}
+  TensorDesc(const c10::TensorTypePtr& type)
+      : TensorDesc(
+            type->scalarType().value(),
+            type->sizes().concrete_sizes().value(),
+            type->strides().concrete_sizes().value()) {}
 
   // number of dimensions after contiguity compression
   size_t nDim() const {
@@ -55,8 +58,8 @@ struct TORCH_API TensorDesc {
   }
 
   static std::vector<bool> findContiguous(
-      const at::IntList& sizes,
-      const at::IntList& strides) {
+      const at::IntArrayRef& sizes,
+      const at::IntArrayRef& strides) {
     AT_ASSERT(sizes.size() == strides.size());
     std::vector<bool> cont(sizes.size());
     for (size_t i = 0; i < sizes.size(); ++i) {

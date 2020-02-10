@@ -9,6 +9,7 @@
 #include <torch/csrc/jit/fuser/kernel_cache.h>
 #include <torch/csrc/jit/fuser/tensor_desc.h>
 #include <torch/csrc/jit/ir.h>
+#include <torch/csrc/jit/operator.h>
 #include <torch/csrc/jit/passes/canonicalize.h>
 #include <torch/csrc/jit/passes/shape_analysis.h>
 
@@ -22,11 +23,17 @@
 #include <unordered_set>
 #include <utility>
 
+namespace {
+std::mutex& fusionBackendLock() {
+  static std::mutex fusion_backends_lock_{};
+  return fusion_backends_lock_;
+}
+}
+
 namespace torch {
 namespace jit {
 namespace fuser {
 
-std::mutex fusion_backends_lock_;
 static std::unordered_map<at::Device::Type, FusedKernelConstructor>&
 getFusionBackends() {
   static std::unordered_map<at::Device::Type, FusedKernelConstructor>
@@ -37,20 +44,19 @@ getFusionBackends() {
 void registerFusionBackend(
     at::Device::Type backend_type,
     FusedKernelConstructor ctor) {
-  std::lock_guard<std::mutex> guard(fusion_backends_lock_);
+  std::lock_guard<std::mutex> guard(fusionBackendLock());
   getFusionBackends()[backend_type] = std::move(ctor);
 }
 
 bool hasFusionBackend(at::Device::Type backend_type) {
-  std::lock_guard<std::mutex> guard(fusion_backends_lock_);
+  std::lock_guard<std::mutex> guard(fusionBackendLock());
   return getFusionBackends().count(backend_type);
 }
 
 const FusedKernelConstructor& getConstructor(at::Device::Type backend_type) {
-  std::lock_guard<std::mutex> guard(fusion_backends_lock_);
+  std::lock_guard<std::mutex> guard(fusionBackendLock());
   return getFusionBackends().at(backend_type);
 }
-
 
 // Counter for number of kernels compiled, used for debugging and
 // creating arbitrary kernel names.
@@ -83,8 +89,12 @@ static const Node* usedInFusedChunk(const Value* input) {
 }
 
 static void setInputChunkDescriptors(KernelSpec& spec) {
-  spec.inputChunks().reserve((spec.graph())->inputs().size());
-  for (const Value* input : (spec.graph())->inputs()) {
+  // We only have as many chunk descriptors as tensor inputs,
+  // furthermore we know that the tensor inputs are in the
+  // beginning of the fusion group's inputs.
+  spec.inputChunks().reserve(spec.nTensorInputs());
+  for (int64_t i = 0; i < spec.nTensorInputs(); i++) {
+    const Value* input = spec.graph()->inputs()[i];
     if (const Node* chunk = usedInFusedChunk(input)) {
       spec.inputChunks().emplace_back(
           chunk->i(attr::chunks), chunk->i(attr::dim));
@@ -103,7 +113,16 @@ static std::vector<int64_t> getInputDependencies(const Value* output) {
     const Value* val = queue.back();
     queue.pop_back();
     const Node* producer = val->node();
-    if (producer->kind() == prim::Param) {
+    // Here we assume that only tensor inputs are used in
+    // the computation of the outputs.
+    // This is currently true, as the only inputs will be
+    // sizes (for _grad_sum_to_size as the derivative
+    // of broadcasts), which will only be used after
+    // the fusion kernel, and Tensors.
+    // This needs to be revisited when you start allowing
+    // other things e.g. nonconstant scalars.
+    if (producer->kind() == prim::Param &&
+        val->type()->isSubtypeOf(TensorType::get())) {
       inputs.insert(val);
       continue;
     }
@@ -188,23 +207,34 @@ std::shared_ptr<FusedKernel> compileKernel(
 
   auto graph = spec.graph()->copy();
 
-  c10::optional<at::ScalarType> scalar_type;
   for (size_t i = 0; i < input_desc.size(); i++) {
     const auto& desc = input_desc[i];
+
+    // TODO: can't get rid of this use of TensorType
+    // until we switch to ProfilingGraphExecutor, so we don't have to
+    // run PropagateInputShapes below
     graph->inputs()[i]->setType(TensorType::create(
         desc.scalar_type,
         device,
-        desc.nDim())); // TODO: nDim is bad, as it is collapsed
+        c10::VaryingShape(desc.nDim()),
+        c10::VaryingShape(desc.nDim()),
+        false)); // TODO: nDim is bad, as it is collapsed
   }
 
   PropagateInputShapes(graph);
 
   // Creates chunk and flattened input descriptions
   std::vector<PartitionDesc> chunk_desc;
-  std::vector<std::pair<const Value*, const TensorDesc>> flat_inputs;
+  std::vector<std::pair<const Value*, const c10::optional<TensorDesc>>> flat_inputs;
   {
     size_t input_index = 0;
     for (const auto& p : graph->inputs()) {
+      if (p->type()->isSubtypeOf(FloatType::get())) {
+        flat_inputs.emplace_back(p, c10::nullopt);
+      }
+      if (!p->type()->isSubtypeOf(TensorType::get())) {
+        continue;
+      }
       if (const Node* chunk = usedInFusedChunk(p)) {
         int64_t dim = chunk->i(attr::dim);
         int64_t chunks = chunk->i(attr::chunks);
@@ -229,8 +259,10 @@ std::shared_ptr<FusedKernel> compileKernel(
     if (o->node()->kind() == prim::FusedConcat) {
       sizes.at(o->node()->i(attr::dim)) *= o->node()->inputs().size();
     }
-    auto scalar_type = o->type()->expect<c10::TensorType const>()->scalarType();
-    auto type = CompleteTensorType::create(scalar_type, device, sizes);
+
+    auto scalar_type = o->type()->expect<TensorType>()->scalarType();
+    TORCH_INTERNAL_ASSERT(scalar_type);
+    auto type = TensorType::createContiguous(*scalar_type, device, sizes);
     output_desc.emplace_back(type);
     const auto& desc = output_desc.back();
 
@@ -247,8 +279,8 @@ std::shared_ptr<FusedKernel> compileKernel(
     }
   }
 
-  const std::string name = "kernel_" + std::to_string(next_kernel_id++);
   const bool use_cuda = device.is_cuda();
+  const std::string name = "kernel_" + c10::to_string(next_kernel_id++);
   std::string code =
       generateKernel(name, *graph, flat_inputs, flat_outputs, use_cuda);
   const FusedKernelConstructor& kernel_ctor =

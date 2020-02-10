@@ -1,14 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <torch/nn/modules.h>
-#include <torch/nn/modules/batchnorm.h>
-#include <torch/nn/modules/conv.h>
-#include <torch/nn/modules/dropout.h>
-#include <torch/nn/modules/linear.h>
-#include <torch/nn/modules/rnn.h>
-#include <torch/nn/modules/sequential.h>
-#include <torch/types.h>
-#include <torch/utils.h>
+#include <torch/torch.h>
 
 #include <algorithm>
 #include <memory>
@@ -21,6 +13,10 @@ using namespace torch::test;
 
 struct SequentialTest : torch::test::SeedingFixture {};
 
+TEST_F(SequentialTest, CanContainThings) {
+  Sequential sequential(Linear(3, 4), ReLU(), BatchNorm(3));
+}
+
 TEST_F(SequentialTest, ConstructsFromSharedPointer) {
   struct M : torch::nn::Module {
     explicit M(int value_) : value(value_) {}
@@ -32,20 +28,47 @@ TEST_F(SequentialTest, ConstructsFromSharedPointer) {
   Sequential sequential(
       std::make_shared<M>(1), std::make_shared<M>(2), std::make_shared<M>(3));
   ASSERT_EQ(sequential->size(), 3);
+
+  Sequential sequential_named({
+    {"m1", std::make_shared<M>(1)},
+    {std::string("m2"), std::make_shared<M>(2)},
+    {"m3", std::make_shared<M>(3)}
+  });
+  ASSERT_EQ(sequential->size(), 3);
 }
 
 TEST_F(SequentialTest, ConstructsFromConcreteType) {
+  static int copy_count;
+
   struct M : torch::nn::Module {
     explicit M(int value_) : value(value_) {}
+    M(const M& other) : torch::nn::Module(other) {
+      copy_count++;
+    }
     int value;
     int forward() {
       return value;
     }
   };
 
+  copy_count = 0;
   Sequential sequential(M(1), M(2), M(3));
   ASSERT_EQ(sequential->size(), 3);
+  // NOTE: The current implementation expects each module to be copied exactly once,
+  // which happens when the module is passed into `std::make_shared<T>()`.
+  // TODO: Find a way to avoid copying, and then delete the copy constructor of `M`.
+  ASSERT_EQ(copy_count, 3);
+
+  copy_count = 0;
+  Sequential sequential_named({
+    {"m1", M(1)},
+    {std::string("m2"), M(2)},
+    {"m3", M(3)}
+  });
+  ASSERT_EQ(sequential->size(), 3);
+  ASSERT_EQ(copy_count, 3);
 }
+
 TEST_F(SequentialTest, ConstructsFromModuleHolder) {
   struct MImpl : torch::nn::Module {
     explicit MImpl(int value_) : value(value_) {}
@@ -62,6 +85,29 @@ TEST_F(SequentialTest, ConstructsFromModuleHolder) {
 
   Sequential sequential(M(1), M(2), M(3));
   ASSERT_EQ(sequential->size(), 3);
+
+  Sequential sequential_named({
+    {"m1", M(1)},
+    {std::string("m2"), M(2)},
+    {"m3", M(3)}
+  });
+  ASSERT_EQ(sequential->size(), 3);
+}
+
+TEST_F(SequentialTest, LegacyBuilderForOrderedDictOfNamedModules) {
+  std::stringstream buffer;
+  CerrRedirect cerr_redirect(buffer.rdbuf());
+
+  Sequential sequential_named(modules_ordered_dict({
+    {"m1", Linear(3, 4)},
+    {"m2", ReLU()},
+    {"m3", BatchNorm(3)}
+  }));
+  ASSERT_EQ(sequential_named->size(), 3);
+
+  ASSERT_EQ(
+    count_substr_occurrences(buffer.str(), "`torch::nn::modules_ordered_dict` is deprecated"),
+    1);
 }
 
 TEST_F(SequentialTest, PushBackAddsAnElement) {
@@ -72,6 +118,8 @@ TEST_F(SequentialTest, PushBackAddsAnElement) {
     }
     int value;
   };
+
+  // Test unnamed submodules
   Sequential sequential;
   ASSERT_EQ(sequential->size(), 0);
   ASSERT_TRUE(sequential->is_empty());
@@ -81,6 +129,32 @@ TEST_F(SequentialTest, PushBackAddsAnElement) {
   ASSERT_EQ(sequential->size(), 2);
   sequential->push_back(M(2));
   ASSERT_EQ(sequential->size(), 3);
+
+  // Mix named and unnamed submodules
+  Sequential sequential_named;
+  ASSERT_EQ(sequential_named->size(), 0);
+  ASSERT_TRUE(sequential_named->is_empty());
+
+  sequential_named->push_back(Linear(3, 4));
+  ASSERT_EQ(sequential_named->size(), 1);
+  ASSERT_EQ(sequential_named->named_children()[0].key(), "0");
+  sequential_named->push_back(std::string("linear2"), Linear(3, 4));
+  ASSERT_EQ(sequential_named->size(), 2);
+  ASSERT_EQ(sequential_named->named_children()[1].key(), "linear2");
+
+  sequential_named->push_back("shared_m1", std::make_shared<M>(1));
+  ASSERT_EQ(sequential_named->size(), 3);
+  ASSERT_EQ(sequential_named->named_children()[2].key(), "shared_m1");
+  sequential_named->push_back(std::make_shared<M>(1));
+  ASSERT_EQ(sequential_named->size(), 4);
+  ASSERT_EQ(sequential_named->named_children()[3].key(), "3");
+
+  sequential_named->push_back(M(1));
+  ASSERT_EQ(sequential_named->size(), 5);
+  ASSERT_EQ(sequential_named->named_children()[4].key(), "4");
+  sequential_named->push_back(std::string("m2"), M(1));
+  ASSERT_EQ(sequential_named->size(), 6);
+  ASSERT_EQ(sequential_named->named_children()[5].key(), "m2");
 }
 
 TEST_F(SequentialTest, AccessWithAt) {
@@ -303,12 +377,12 @@ TEST_F(SequentialTest, IsCloneable) {
 }
 
 TEST_F(SequentialTest, RegistersElementsAsSubmodules) {
-  Sequential sequential(Linear(10, 3), Conv2d(1, 2, 3), FeatureDropout(0.5));
+  Sequential sequential(Linear(10, 3), Conv2d(1, 2, 3), Dropout2d(0.5));
 
   auto modules = sequential->children();
   ASSERT_TRUE(modules[0]->as<Linear>());
   ASSERT_TRUE(modules[1]->as<Conv2d>());
-  ASSERT_TRUE(modules[2]->as<FeatureDropout>());
+  ASSERT_TRUE(modules[2]->as<Dropout2d>());
 }
 
 TEST_F(SequentialTest, CloneToDevice_CUDA) {
@@ -335,11 +409,30 @@ TEST_F(SequentialTest, PrettyPrintSequential) {
   ASSERT_EQ(
       c10::str(sequential),
       "torch::nn::Sequential(\n"
-      "  (0): torch::nn::Linear(in=10, out=3, with_bias=true)\n"
-      "  (1): torch::nn::Conv2d(input_channels=1, output_channels=2, kernel_size=[3, 3], stride=[1, 1])\n"
-      "  (2): torch::nn::Dropout(rate=0.5)\n"
-      "  (3): torch::nn::BatchNorm(features=5, eps=1e-05, momentum=0.1, affine=true, stateful=true)\n"
-      "  (4): torch::nn::Embedding(count=4, dimension=10)\n"
+      "  (0): torch::nn::Linear(in_features=10, out_features=3, bias=true)\n"
+      "  (1): torch::nn::Conv2d(1, 2, kernel_size=[3, 3], stride=[1, 1])\n"
+      "  (2): torch::nn::Dropout(p=0.5, inplace=false)\n"
+      "  (3): torch::nn::BatchNorm(num_features=5, eps=1e-05, momentum=0.1, affine=true, track_running_stats=true)\n"
+      "  (4): torch::nn::Embedding(num_embeddings=4, embedding_dim=10)\n"
       "  (5): torch::nn::LSTM(input_size=4, hidden_size=5, layers=1, dropout=0)\n"
+      ")");
+
+  Sequential sequential_named({
+      {"linear", Linear(10, 3)},
+      {"conv2d", Conv2d(1, 2, 3)},
+      {"dropout", Dropout(0.5)},
+      {"batchnorm", BatchNorm(5)},
+      {"embedding", Embedding(4, 10)},
+      {"lstm", LSTM(4, 5)}
+  });
+  ASSERT_EQ(
+      c10::str(sequential_named),
+      "torch::nn::Sequential(\n"
+      "  (linear): torch::nn::Linear(in_features=10, out_features=3, bias=true)\n"
+      "  (conv2d): torch::nn::Conv2d(1, 2, kernel_size=[3, 3], stride=[1, 1])\n"
+      "  (dropout): torch::nn::Dropout(p=0.5, inplace=false)\n"
+      "  (batchnorm): torch::nn::BatchNorm(num_features=5, eps=1e-05, momentum=0.1, affine=true, track_running_stats=true)\n"
+      "  (embedding): torch::nn::Embedding(num_embeddings=4, embedding_dim=10)\n"
+      "  (lstm): torch::nn::LSTM(input_size=4, hidden_size=5, layers=1, dropout=0)\n"
       ")");
 }

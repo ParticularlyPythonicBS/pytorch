@@ -82,7 +82,9 @@ void writeTextOutput(
   }
   // remove the last ,
   string str = line.str();
-  str.pop_back();
+  if(str.length() != 0) {
+    str.pop_back();
+  }
   lines.push_back(str);
 
   // static casts are workaround for MSVC build
@@ -123,7 +125,7 @@ void writeOutput(
     const int num_blobs);
 void runNetwork(
     shared_ptr<caffe2::Workspace> workspace,
-    caffe2::NetDef& net_def,
+    caffe2::NetBase* net,
     map<string, caffe2::TensorProtos>& tensor_protos_map,
     const bool wipe_cache,
     const bool run_individual,
@@ -147,6 +149,7 @@ int benchmark(
     const string& FLAGS_input_file,
     const string& FLAGS_input_type,
     int FLAGS_iter,
+    bool FLAGS_measure_memory,
     const string& FLAGS_net,
     const string& FLAGS_output,
     const string& FLAGS_output_folder,

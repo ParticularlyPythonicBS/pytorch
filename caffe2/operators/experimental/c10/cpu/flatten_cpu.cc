@@ -1,7 +1,7 @@
-#include <ATen/core/dispatch/KernelRegistration.h>
-#include "caffe2/operators/experimental/c10/schemas/flatten.h"
-#include "caffe2/utils/math.h"
+#include <ATen/core/op_registration/op_registration.h>
+#include "caffe2/core/export_c10_op_to_caffe2.h"
 #include "caffe2/core/tensor.h"
+#include "caffe2/utils/math.h"
 
 using caffe2::BaseContext;
 using caffe2::Tensor;
@@ -12,9 +12,9 @@ template <class DataType, class Context>
 void flatten_op_cpu_impl(
     const at::Tensor& input_,
     const at::Tensor& output_,
-    int axis) {
-  Tensor input{C10Tensor(input_)};
-  Tensor output{C10Tensor(output_)};
+    int64_t axis) {
+  Tensor input(input_);
+  Tensor output(output_);
   CPUContext context;
   CAFFE_ENFORCE_GE(
       input.sizes().size(), axis, "The rank of the tensor must be >= axis.");
@@ -25,13 +25,18 @@ void flatten_op_cpu_impl(
       input.raw_data(),
       output.raw_mutable_data(input.dtype()));
 }
-} // namespace
-} // namespace caffe2
 
-namespace c10 {
-C10_REGISTER_KERNEL(caffe2::ops::Flatten)
-    .kernel<&caffe2::flatten_op_cpu_impl<float, caffe2::CPUContext>>()
-    .dispatchKey({DeviceTypeId::CPU,
-                  LayoutId(0),
-                  caffe2::TypeMeta::Id<float>()});
-} // namespace c10
+static auto registry = c10::RegisterOperators().op(
+    "_c10_experimental::Flatten",
+    c10::RegisterOperators::options()
+      .kernel<
+        decltype(flatten_op_cpu_impl<float, CPUContext>),
+        &flatten_op_cpu_impl<float, CPUContext>>(DispatchKey::CPUTensorId));
+
+} // namespace
+
+C10_EXPORT_C10_OP_TO_CAFFE2_CPU(
+    "_c10_experimental::Flatten",
+    C10Flatten_DontUseThisOpYet)
+
+} // namespace caffe2
